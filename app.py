@@ -2,6 +2,7 @@ import io
 import csv
 import json
 from datetime import datetime, time
+from zoneinfo import ZoneInfo
 import streamlit as st
 import pandas as pd
 from models import (
@@ -57,10 +58,16 @@ for k, v in DEFAULTS.items():
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def now_decimal() -> float:
-    """Hora atual como decimal (ex: 14h30 = 14.5)."""
-    t = datetime.now().time()
-    return t.hour + t.minute / 60.0 + t.second / 3600.0
+def now_decimal(shift_start: float = 8.0, shift_end: float = 17.0) -> float:
+    """
+    Hora atual como decimal no fuso de Brasília.
+    Se fora do horário de turno, retorna shift_start (planejando para o próximo turno).
+    """
+    t = datetime.now(ZoneInfo("America/Sao_Paulo")).time()
+    h = t.hour + t.minute / 60.0 + t.second / 3600.0
+    if h >= shift_end or h < shift_start:
+        return shift_start
+    return h
 
 
 def fmt_h(h: float) -> str:
@@ -193,7 +200,7 @@ def confirm_op(machine_id: str, result, items_res, cfg):
 
     # ── 4. Registra no histórico ──────────────────────────────────────────────
     op_id    = f"OP{st.session_state.op_counter:04d}"
-    now_str  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str  = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%Y-%m-%d %H:%M:%S")
     shift_end = cfg.get("shift_end", 17.0)
 
     for pull in pulls:
@@ -263,7 +270,7 @@ def run_optimizer(cfg, exclude_orders=None):
     if not items:
         st.error("Nenhum pedido pode ser produzido com o estoque atual.")
         return
-    current_h = now_decimal()
+    current_h = now_decimal(cfg.get("shift_start", 8.0), cfg.get("shift_end", 17.0))
     with st.spinner("Calculando sequenciamento ótimo..."):
         try:
             result = optimize(
@@ -293,22 +300,32 @@ st.caption("Otimizador de sequenciamento e agrupamento para indústria flexográ
 cfg_cur = st.session_state.get("cfg", {})
 shift_start = cfg_cur.get("shift_start", 8.0)
 shift_end   = cfg_cur.get("shift_end",  17.0)
-now_h       = now_decimal()
+now_h       = now_decimal(shift_start, shift_end)
+real_h      = datetime.now(ZoneInfo("America/Sao_Paulo")).time()
+real_decimal = real_h.hour + real_h.minute / 60.0
+outside_shift = real_decimal >= shift_end or real_decimal < shift_start
 remaining_min = max(0.0, (shift_end - now_h) * 60)
 busy_machines = [k for k, v in st.session_state.machine_busy.items() if v > now_h]
 
 col_sh1, col_sh2, col_sh3, col_sh4 = st.columns(4)
 with col_sh1:
+    real_time_str = f"{real_h.hour:02d}:{real_h.minute:02d}"
     st.markdown(f"""<div class="shift-bar">
-    🕐 <strong>Agora:</strong> {fmt_h(now_h)}<br>
+    🕐 <strong>Agora:</strong> {real_time_str}<br>
     <small>Turno: {fmt_h(shift_start)} – {fmt_h(shift_end)}</small>
     </div>""", unsafe_allow_html=True)
 with col_sh2:
-    color = "#c55a11" if remaining_min < 60 else "#1F4E79"
-    st.markdown(f"""<div class="shift-bar">
-    ⏳ <strong style="color:{color}">{remaining_min:.0f} min restantes</strong><br>
-    <small>até fim do turno ({fmt_h(shift_end)})</small>
-    </div>""", unsafe_allow_html=True)
+    if outside_shift:
+        st.markdown(f"""<div class="shift-bar">
+        📋 <strong style="color:#375623">Modo planejamento</strong><br>
+        <small>Fora do turno — otimizando para amanhã ({fmt_h(shift_start)})</small>
+        </div>""", unsafe_allow_html=True)
+    else:
+        color = "#c55a11" if remaining_min < 60 else "#1F4E79"
+        st.markdown(f"""<div class="shift-bar">
+        ⏳ <strong style="color:{color}">{remaining_min:.0f} min restantes</strong><br>
+        <small>até fim do turno ({fmt_h(shift_end)})</small>
+        </div>""", unsafe_allow_html=True)
 with col_sh3:
     if busy_machines:
         busy_str = " | ".join(f"{m}: livre às {fmt_h(st.session_state.machine_busy[m])}"
@@ -723,7 +740,7 @@ with tab_h:
         st.download_button(
             "📥 Baixar histórico completo (.csv)",
             data=buf_csv.getvalue().encode("utf-8-sig"),
-            file_name=f"flexotimiza_historico_{datetime.now().strftime('%Y%m%d')}.csv",
+            file_name=f"flexotimiza_historico_{datetime.now(ZoneInfo('America/Sao_Paulo')).strftime('%Y%m%d')}.csv",
             mime="text/csv",
         )
 
