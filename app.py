@@ -270,8 +270,11 @@ def run_optimizer(cfg, exclude_orders=None):
         st.session_state.maint_df, cfg, exclude_orders=exclude_orders)
     if not items:
         st.error("Nenhum pedido pode ser produzido com o estoque atual.")
-        return
+        return False
     current_h = now_decimal(cfg.get("shift_start", 8.0), cfg.get("shift_end", 17.0))
+    error_msg = None
+    error_tb  = None
+    result    = None
     with st.spinner("Calculando sequenciamento ótimo..."):
         try:
             result = optimize(
@@ -282,15 +285,23 @@ def run_optimizer(cfg, exclude_orders=None):
                 gamma=cfg.get("gamma",3.0), delta=cfg.get("delta",0.5),
                 time_limit_s=cfg.get("time_limit",60),
             )
-            st.session_state.result       = result
-            st.session_state.result_items = items
-            st.session_state.blocked_orders   = exclude_orders or []
-            st.session_state.stock_decision_pending = False
-            st.rerun()
         except Exception as e:
-            st.error(f"Erro na otimização: {e}")
             import traceback
-            st.code(traceback.format_exc())
+            error_msg = str(e)
+            error_tb  = traceback.format_exc()
+
+    # st.rerun() MUST be called OUTSIDE the try/except — internally it raises
+    # RerunException which would be silently swallowed inside the except block
+    if error_msg:
+        st.error(f"Erro na otimização: {error_msg}")
+        st.code(error_tb)
+        return False
+
+    st.session_state.result             = result
+    st.session_state.result_items       = items
+    st.session_state.blocked_orders     = exclude_orders or []
+    st.session_state.stock_decision_pending = False
+    return True
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -535,7 +546,8 @@ if run_btn:
         else:
             st.session_state.items_sem_estoque = []
             st.session_state.recomendacoes = []
-            run_optimizer(st.session_state.get("cfg", {}))
+            if run_optimizer(st.session_state.get("cfg", {})):
+                st.rerun()
 
 # ── POPUP ESTOQUE INSUFICIENTE ────────────────────────────────────────────────
 if st.session_state.get("stock_decision_pending"):
@@ -552,10 +564,12 @@ if st.session_state.get("stock_decision_pending"):
     cd1, cd2 = st.columns(2)
     with cd1:
         if st.button("🚫 Bloquear pedidos sem estoque completo", use_container_width=True, key="btn_block"):
-            run_optimizer(cfg, exclude_orders=pedidos_inc)
+            if run_optimizer(cfg, exclude_orders=pedidos_inc):
+                st.rerun()
     with cd2:
         if st.button("⚡ Otimizar tudo (listar sem estoque no resultado)", use_container_width=True, key="btn_all"):
-            run_optimizer(cfg)
+            if run_optimizer(cfg):
+                st.rerun()
     if recomendacoes:
         st.markdown("---")
         st.markdown("**🛒 Recomendação de compra:**")
