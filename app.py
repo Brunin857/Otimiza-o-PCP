@@ -225,6 +225,7 @@ def confirm_op(machine_id: str, result, items_res, cfg):
 
     st.session_state.op_counter += 1
     st.session_state.result = None   # limpa resultado para forçar nova otimização
+    # rerun is called by the caller after this function
 
 
 def export_session():
@@ -285,9 +286,11 @@ def run_optimizer(cfg, exclude_orders=None):
             st.session_state.result_items = items
             st.session_state.blocked_orders   = exclude_orders or []
             st.session_state.stock_decision_pending = False
-            st.success("✅ Otimização concluída! Veja a aba **Resultado**.")
+            st.rerun()
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"Erro na otimização: {e}")
+            import traceback
+            st.code(traceback.format_exc())
 
 
 # ═════════════════════════════════════════════════════════════════════════════
